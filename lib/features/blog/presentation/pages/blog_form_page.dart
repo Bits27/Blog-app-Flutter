@@ -22,6 +22,7 @@ class BlogFormPage extends StatefulWidget {
 
 class _BlogFormPageState extends State<BlogFormPage> {
   static const _categories = ['school', 'travel', 'food', 'others'];
+  static const _maxImages = 6;
 
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
@@ -36,8 +37,8 @@ class _BlogFormPageState extends State<BlogFormPage> {
   bool _isDeleting = false;
   bool _isEditing = false;
   String? _blogId;
-  String? _imageUrl;
-  Uint8List? _pickedBytes;
+  List<String> _imageUrls = const [];
+  final Map<String, Uint8List> _previewBytesByUrl = {};
 
   @override
   void didChangeDependencies() {
@@ -94,7 +95,8 @@ class _BlogFormPageState extends State<BlogFormPage> {
         _selectedCategory = _categories.contains(blog.category)
             ? blog.category
             : 'others';
-        _imageUrl = blog.imageUrl;
+        _imageUrls = List<String>.from(blog.imageUrls);
+        _previewBytesByUrl.clear();
       });
     } catch (error) {
       if (!mounted) return;
@@ -109,23 +111,49 @@ class _BlogFormPageState extends State<BlogFormPage> {
     }
   }
 
-  Future<void> _pickAndUploadImage() async {
-    final picked = await _picker.pickImage(source: ImageSource.gallery);
-    if (picked == null) return;
+  Future<void> _pickAndUploadImages() async {
+    final remainingSlots = _maxImages - _imageUrls.length;
+    if (remainingSlots <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You can upload up to 6 photos only.')),
+      );
+      return;
+    }
+
+    final picked = await _picker.pickMultiImage();
+    if (picked.isEmpty) return;
+
+    // Max 6 images.
+    final selected = picked.take(remainingSlots).toList();
+    if (picked.length > remainingSlots && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Only $remainingSlots image(s) were added. Max is $_maxImages.',
+          ),
+        ),
+      );
+    }
 
     setState(() => _isUploading = true);
 
     try {
-      final bytes = await picked.readAsBytes();
-      final publicUrl = await _blogRepository.uploadBlogImage(
-        bytes: bytes,
-        fileName: picked.name,
-      );
+      final uploadedUrls = <String>[];
+      final previewMap = <String, Uint8List>{};
+      for (final file in selected) {
+        final bytes = await file.readAsBytes();
+        final publicUrl = await _blogRepository.uploadBlogImage(
+          bytes: bytes,
+          fileName: file.name,
+        );
+        uploadedUrls.add(publicUrl);
+        previewMap[publicUrl] = bytes;
+      }
 
       if (!mounted) return;
       setState(() {
-        _pickedBytes = bytes;
-        _imageUrl = publicUrl;
+        _imageUrls = [..._imageUrls, ...uploadedUrls];
+        _previewBytesByUrl.addAll(previewMap);
       });
     } catch (error) {
       if (!mounted) return;
@@ -140,6 +168,14 @@ class _BlogFormPageState extends State<BlogFormPage> {
   }
 
   Future<void> _submit() async {
+    // Wait for uploads.
+    if (_isUploading) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please wait for image upload to finish.')),
+      );
+      return;
+    }
+
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isSubmitting = true);
@@ -151,7 +187,7 @@ class _BlogFormPageState extends State<BlogFormPage> {
           title: _titleController.text.trim(),
           content: _contentController.text.trim(),
           category: _selectedCategory,
-          imageUrl: _imageUrl,
+          imageUrls: _imageUrls,
         );
 
         if (!mounted) return;
@@ -162,7 +198,7 @@ class _BlogFormPageState extends State<BlogFormPage> {
           title: _titleController.text.trim(),
           content: _contentController.text.trim(),
           category: _selectedCategory,
-          imageUrl: _imageUrl,
+          imageUrls: _imageUrls,
         );
 
         if (!mounted) return;
@@ -235,13 +271,11 @@ class _BlogFormPageState extends State<BlogFormPage> {
 
   String _imageButtonLabel() {
     if (_isUploading) return 'Uploading...';
-    final hasImage =
-        _pickedBytes != null || (_imageUrl != null && _imageUrl!.isNotEmpty);
-    return hasImage ? 'Change Photo' : 'Attach Photo';
+    if (_imageUrls.isEmpty) return 'Attach Photos';
+    return 'Add More Photos (${_imageUrls.length}/$_maxImages)';
   }
 
-  bool get _hasImage =>
-      _pickedBytes != null || (_imageUrl != null && _imageUrl!.isNotEmpty);
+  bool get _hasImage => _imageUrls.isNotEmpty;
 
   String _submitButtonLabel() {
     if (_isSubmitting) {
@@ -250,10 +284,18 @@ class _BlogFormPageState extends State<BlogFormPage> {
     return _isEditing ? 'Update Blog' : 'Create Blog';
   }
 
-  void _clearImage() {
+  void _clearAllImages() {
     setState(() {
-      _pickedBytes = null;
-      _imageUrl = null;
+      _imageUrls = const [];
+      _previewBytesByUrl.clear();
+    });
+  }
+
+  void _removeImageAt(int index) {
+    final selectedUrl = _imageUrls[index];
+    setState(() {
+      _imageUrls = List<String>.from(_imageUrls)..removeAt(index);
+      _previewBytesByUrl.remove(selectedUrl);
     });
   }
 
@@ -282,35 +324,104 @@ class _BlogFormPageState extends State<BlogFormPage> {
   List<Widget> _buildImageSection({required double previewHeight}) {
     return [
       OutlinedButton(
-        onPressed: _isUploading ? null : _pickAndUploadImage,
+        onPressed: _isUploading ? null : _pickAndUploadImages,
         child: Text(_imageButtonLabel()),
       ),
-      if (_pickedBytes != null) ...[
+      const SizedBox(height: 8),
+      Text(
+        'Selected: ${_imageUrls.length}/$_maxImages',
+        style: const TextStyle(color: Color(0xFF6B6360)),
+      ),
+      if (_imageUrls.isNotEmpty) ...[
         const SizedBox(height: 10),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: Image.memory(
-            _pickedBytes!,
+        if (_imageUrls.length == 1)
+          SizedBox(
             height: previewHeight,
             width: double.infinity,
-            fit: BoxFit.cover,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: (_previewBytesByUrl[_imageUrls.first] != null)
+                      ? Image.memory(
+                          _previewBytesByUrl[_imageUrls.first]!,
+                          fit: BoxFit.cover,
+                        )
+                      : Image.network(_imageUrls.first, fit: BoxFit.cover),
+                ),
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: InkWell(
+                    onTap: () => _removeImageAt(0),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Padding(
+                        padding: EdgeInsets.all(3),
+                        child: Icon(Icons.close, color: Colors.white, size: 16),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: List.generate(_imageUrls.length, (index) {
+              final url = _imageUrls[index];
+              final previewBytes = _previewBytesByUrl[url];
+              return SizedBox(
+                width: previewHeight / 2,
+                height: previewHeight / 2,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: previewBytes != null
+                          ? Image.memory(previewBytes, fit: BoxFit.cover)
+                          : Image.network(url, fit: BoxFit.cover),
+                    ),
+                    Positioned(
+                      top: 4,
+                      right: 4,
+                      child: InkWell(
+                        onTap: () => _removeImageAt(index),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: const Padding(
+                            padding: EdgeInsets.all(2),
+                            child: Icon(
+                              Icons.close,
+                              color: Colors.white,
+                              size: 14,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
           ),
-        ),
-      ] else if (_imageUrl != null && _imageUrl!.isNotEmpty) ...[
-        const SizedBox(height: 10),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: Image.network(
-            _imageUrl!,
-            height: previewHeight,
-            width: double.infinity,
-            fit: BoxFit.cover,
-          ),
-        ),
       ],
       if (_hasImage) ...[
         const SizedBox(height: 8),
-        TextButton(onPressed: _clearImage, child: const Text('Remove Photo')),
+        TextButton(
+          onPressed: _clearAllImages,
+          child: const Text('Remove All Photos'),
+        ),
       ],
     ];
   }
@@ -357,13 +468,17 @@ class _BlogFormPageState extends State<BlogFormPage> {
             ..._buildImageSection(previewHeight: previewHeight),
             const SizedBox(height: 16),
             ElevatedButton(
-              onPressed: (_isSubmitting || _isDeleting) ? null : _submit,
+              onPressed: (_isSubmitting || _isDeleting || _isUploading)
+                  ? null
+                  : _submit,
               child: Text(_submitButtonLabel()),
             ),
             if (_isEditing) ...[
               const SizedBox(height: 8),
               TextButton(
-                onPressed: (_isSubmitting || _isDeleting) ? null : _deleteBlog,
+                onPressed: (_isSubmitting || _isDeleting || _isUploading)
+                    ? null
+                    : _deleteBlog,
                 child: Text(
                   _isDeleting ? 'Deleting...' : 'Delete Blog',
                   style: const TextStyle(

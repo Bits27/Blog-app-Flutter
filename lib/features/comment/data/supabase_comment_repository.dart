@@ -39,18 +39,22 @@ class SupabaseCommentRepository implements CommentRepository {
   Future<void> createComment({
     required String blogId,
     required String content,
-    String? imageUrl,
+    List<String> imageUrls = const [],
   }) async {
     final user = supabase.auth.currentUser;
     if (user == null) {
       throw Exception('You must be logged in to comment.');
     }
 
+    // Keep legacy preview.
+    final primaryImageUrl = imageUrls.isNotEmpty ? imageUrls.first : null;
+
     await supabase.from(_table).insert({
       'blog_id': blogId,
       'user_id': user.id,
       'content': content,
-      'image_url': imageUrl,
+      'image_url': primaryImageUrl,
+      'image_urls': imageUrls,
       'created_at': DateTime.now().toIso8601String(),
       'updated_at': DateTime.now().toIso8601String(),
     });
@@ -60,13 +64,17 @@ class SupabaseCommentRepository implements CommentRepository {
   Future<void> updateComment({
     required String commentId,
     required String content,
-    String? imageUrl,
+    List<String> imageUrls = const [],
   }) async {
+    // Keep legacy preview.
+    final primaryImageUrl = imageUrls.isNotEmpty ? imageUrls.first : null;
+
     await supabase
         .from(_table)
         .update({
           'content': content,
-          'image_url': imageUrl,
+          'image_url': primaryImageUrl,
+          'image_urls': imageUrls,
           'updated_at': DateTime.now().toIso8601String(),
         })
         .eq('id', commentId);

@@ -26,6 +26,8 @@ class BlogDetailPage extends StatefulWidget {
 }
 
 class _BlogDetailPageState extends State<BlogDetailPage> {
+  static const _maxCommentImages = 6;
+
   final _repository = SupabaseBlogRepository();
   final _commentRepository = SupabaseCommentRepository();
   final _profileRepository = SupabaseProfileRepository();
@@ -38,7 +40,7 @@ class _BlogDetailPageState extends State<BlogDetailPage> {
   bool _isLoadingComments = false;
   bool _isCommentComposerOpen = false;
   bool _isSubmittingComment = false;
-  bool _isUploadingCommentImage = false;
+  bool _isUploadingCommentImages = false;
 
   Blog? _blog;
   String _blogOwnerName = 'InkFrame Writer';
@@ -47,8 +49,8 @@ class _BlogDetailPageState extends State<BlogDetailPage> {
   Map<String, String> _commentUsernames = const {};
   Map<String, String?> _commentAvatarUrls = const {};
   String? _editingCommentId;
-  String? _commentImageUrl;
-  Uint8List? _commentImageBytes;
+  List<String> _commentImageUrls = const [];
+  final Map<String, Uint8List> _commentPreviewBytesByUrl = {};
 
   static const _monthNames = <String>[
     'Jan',
@@ -156,23 +158,49 @@ class _BlogDetailPageState extends State<BlogDetailPage> {
     }
   }
 
-  Future<void> _pickAndUploadCommentImage() async {
-    final picked = await _picker.pickImage(source: ImageSource.gallery);
-    if (picked == null) return;
+  Future<void> _pickAndUploadCommentImages() async {
+    final remainingSlots = _maxCommentImages - _commentImageUrls.length;
+    if (remainingSlots <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You can upload up to 6 photos only.')),
+      );
+      return;
+    }
 
-    setState(() => _isUploadingCommentImage = true);
+    final picked = await _picker.pickMultiImage();
+    if (picked.isEmpty) return;
+
+    // Max 6 images.
+    final selected = picked.take(remainingSlots).toList();
+    if (picked.length > remainingSlots && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Only $remainingSlots image(s) were added. Max is $_maxCommentImages.',
+          ),
+        ),
+      );
+    }
+
+    setState(() => _isUploadingCommentImages = true);
 
     try {
-      final bytes = await picked.readAsBytes();
-      final url = await _commentRepository.uploadCommentImage(
-        bytes: bytes,
-        fileName: picked.name,
-      );
+      final uploadedUrls = <String>[];
+      final previewMap = <String, Uint8List>{};
+      for (final file in selected) {
+        final bytes = await file.readAsBytes();
+        final url = await _commentRepository.uploadCommentImage(
+          bytes: bytes,
+          fileName: file.name,
+        );
+        uploadedUrls.add(url);
+        previewMap[url] = bytes;
+      }
 
       if (!mounted) return;
       setState(() {
-        _commentImageBytes = bytes;
-        _commentImageUrl = url;
+        _commentImageUrls = [..._commentImageUrls, ...uploadedUrls];
+        _commentPreviewBytesByUrl.addAll(previewMap);
       });
     } catch (error) {
       if (!mounted) return;
@@ -181,7 +209,7 @@ class _BlogDetailPageState extends State<BlogDetailPage> {
       );
     } finally {
       if (mounted) {
-        setState(() => _isUploadingCommentImage = false);
+        setState(() => _isUploadingCommentImages = false);
       }
     }
   }
@@ -191,8 +219,8 @@ class _BlogDetailPageState extends State<BlogDetailPage> {
       _isCommentComposerOpen = true;
       _editingCommentId = null;
       _commentController.clear();
-      _commentImageUrl = null;
-      _commentImageBytes = null;
+      _commentImageUrls = const [];
+      _commentPreviewBytesByUrl.clear();
     });
   }
 
@@ -201,10 +229,10 @@ class _BlogDetailPageState extends State<BlogDetailPage> {
       _isCommentComposerOpen = false;
       _editingCommentId = null;
       _commentController.clear();
-      _commentImageUrl = null;
-      _commentImageBytes = null;
+      _commentImageUrls = const [];
+      _commentPreviewBytesByUrl.clear();
       _isSubmittingComment = false;
-      _isUploadingCommentImage = false;
+      _isUploadingCommentImages = false;
     });
   }
 
@@ -213,8 +241,8 @@ class _BlogDetailPageState extends State<BlogDetailPage> {
       _isCommentComposerOpen = false;
       _editingCommentId = comment.id;
       _commentController.text = comment.body;
-      _commentImageUrl = comment.imageUrl;
-      _commentImageBytes = null;
+      _commentImageUrls = List<String>.from(comment.imageUrls);
+      _commentPreviewBytesByUrl.clear();
     });
   }
 
@@ -222,10 +250,10 @@ class _BlogDetailPageState extends State<BlogDetailPage> {
     setState(() {
       _editingCommentId = null;
       _commentController.clear();
-      _commentImageUrl = null;
-      _commentImageBytes = null;
+      _commentImageUrls = const [];
+      _commentPreviewBytesByUrl.clear();
       _isSubmittingComment = false;
-      _isUploadingCommentImage = false;
+      _isUploadingCommentImages = false;
     });
   }
 
@@ -250,13 +278,13 @@ class _BlogDetailPageState extends State<BlogDetailPage> {
         await _commentRepository.updateComment(
           commentId: _editingCommentId!,
           content: content,
-          imageUrl: _commentImageUrl,
+          imageUrls: _commentImageUrls,
         );
       } else {
         await _commentRepository.createComment(
           blogId: _blogId!,
           content: content,
-          imageUrl: _commentImageUrl,
+          imageUrls: _commentImageUrls,
         );
       }
 
@@ -326,17 +354,15 @@ class _BlogDetailPageState extends State<BlogDetailPage> {
 
   void _clearCommentImageSelection() {
     setState(() {
-      _commentImageBytes = null;
-      _commentImageUrl = null;
+      _commentImageUrls = const [];
+      _commentPreviewBytesByUrl.clear();
     });
   }
 
   String _commentImageButtonLabel() {
-    if (_isUploadingCommentImage) return 'Uploading image...';
-    final hasImage =
-        _commentImageBytes != null ||
-        (_commentImageUrl != null && _commentImageUrl!.isNotEmpty);
-    return hasImage ? 'Change Image' : 'Attach Image';
+    if (_isUploadingCommentImages) return 'Uploading image...';
+    if (_commentImageUrls.isEmpty) return 'Attach Images';
+    return 'Add More Images (${_commentImageUrls.length}/$_maxCommentImages)';
   }
 
   void _handlePopInvoked(bool didPop) {
@@ -348,7 +374,7 @@ class _BlogDetailPageState extends State<BlogDetailPage> {
     return [
       const SizedBox(height: 8),
       OutlinedButton(
-        onPressed: _isUploadingCommentImage ? null : _pickAndUploadCommentImage,
+        onPressed: _isUploadingCommentImages ? null : _pickAndUploadCommentImages,
         child: Text(_commentImageButtonLabel()),
       ),
       ..._buildCommentImagePreview(imageHeight: imageHeight),
@@ -356,32 +382,65 @@ class _BlogDetailPageState extends State<BlogDetailPage> {
   }
 
   List<Widget> _buildCommentImagePreview({required double imageHeight}) {
-    final hasImage =
-        _commentImageBytes != null ||
-        (_commentImageUrl != null && _commentImageUrl!.isNotEmpty);
-
-    if (!hasImage) return const [];
+    if (_commentImageUrls.isEmpty) return const [];
 
     return [
       const SizedBox(height: 8),
-      ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: _commentImageBytes != null
-            ? Image.memory(
-                _commentImageBytes!,
-                height: imageHeight,
-                fit: BoxFit.cover,
-              )
-            : Image.network(
-                _commentImageUrl!,
-                height: imageHeight,
-                fit: BoxFit.cover,
-              ),
+      Text(
+        'Selected: ${_commentImageUrls.length}/$_maxCommentImages',
+        style: const TextStyle(color: Color(0xFF6B6360)),
+      ),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: List.generate(_commentImageUrls.length, (index) {
+          final url = _commentImageUrls[index];
+          final previewBytes = _commentPreviewBytesByUrl[url];
+          return SizedBox(
+            width: imageHeight / 1.4,
+            height: imageHeight / 1.4,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: previewBytes != null
+                      ? Image.memory(previewBytes, fit: BoxFit.cover)
+                      : Image.network(url, fit: BoxFit.cover),
+                ),
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: InkWell(
+                    onTap: () {
+                      setState(() {
+                        _commentImageUrls = List<String>.from(_commentImageUrls)
+                          ..removeAt(index);
+                        _commentPreviewBytesByUrl.remove(url);
+                      });
+                    },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Padding(
+                        padding: EdgeInsets.all(2),
+                        child: Icon(Icons.close, size: 14, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
       ),
       const SizedBox(height: 8),
       TextButton(
         onPressed: _clearCommentImageSelection,
-        child: const Text('Remove Photo'),
+        child: const Text('Remove All Photos'),
       ),
     ];
   }
@@ -445,17 +504,34 @@ class _BlogDetailPageState extends State<BlogDetailPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (blog.imageUrl != null && blog.imageUrl!.isNotEmpty)
+                if (blog.imageUrls.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.network(
-                        blog.imageUrl!,
-                        height: heroImageHeight,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
+                    child: blog.imageUrls.length == 1
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.network(
+                              blog.imageUrls.first,
+                              height: heroImageHeight,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                            ),
+                          )
+                        : Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: blog.imageUrls.map((url) {
+                              return ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.network(
+                                  url,
+                                  height: heroImageHeight / 1.8,
+                                  width: heroImageHeight / 1.5,
+                                  fit: BoxFit.cover,
+                                ),
+                              );
+                            }).toList(),
+                          ),
                   ),
                 Text(
                   blog.title,
@@ -716,16 +792,23 @@ class _BlogDetailPageState extends State<BlogDetailPage> {
               ),
             ] else ...[
               Text(comment.body),
-              if (comment.imageUrl != null && comment.imageUrl!.isNotEmpty)
+              if (comment.imageUrls.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      comment.imageUrl!,
-                      height: commentImageHeight,
-                      fit: BoxFit.cover,
-                    ),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: comment.imageUrls.map((url) {
+                      return ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.network(
+                          url,
+                          height: commentImageHeight / 1.6,
+                          width: commentImageHeight / 1.6,
+                          fit: BoxFit.cover,
+                        ),
+                      );
+                    }).toList(),
                   ),
                 ),
             ],

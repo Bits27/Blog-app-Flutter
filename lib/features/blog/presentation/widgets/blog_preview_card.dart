@@ -28,19 +28,21 @@ class BlogPreviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final previewImageUrl = blog.primaryImageUrl;
+
     return InkCard(
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (blog.imageUrl != null && blog.imageUrl!.isNotEmpty)
+            if (previewImageUrl != null && previewImageUrl.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: Image.network(
-                    blog.imageUrl!,
+                    previewImageUrl,
                     height: imageHeight,
                     width: double.infinity,
                     fit: BoxFit.cover,

@@ -9,6 +9,7 @@ class Blog {
     required this.createdAt,
     required this.updatedAt,
     this.imageUrl,
+    this.imageUrls = const [],
   });
 
   final String id;
@@ -19,15 +20,35 @@ class Blog {
   final DateTime createdAt;
   final DateTime updatedAt;
   final String? imageUrl;
+  final List<String> imageUrls;
+
+  String? get primaryImageUrl {
+    if (imageUrls.isNotEmpty) return imageUrls.first;
+    return imageUrl;
+  }
 
   factory Blog.fromMap(Map<String, dynamic> map) {
+    final rawImageUrls = map['image_urls'];
+    final urls = rawImageUrls is List
+        ? rawImageUrls
+              .whereType<String>()
+              .where((value) => value.trim().isNotEmpty)
+              .toList()
+        : <String>[];
+    final legacy = map['image_url'] as String?;
+    // Legacy fallback.
+    final mergedUrls = urls.isNotEmpty
+        ? urls
+        : (legacy != null && legacy.trim().isNotEmpty ? [legacy] : <String>[]);
+
     return Blog(
       id: map['id'] as String,
       title: map['title'] as String,
       content: map['content'] as String,
       category: map['category'] as String,
       authorId: map['user_id'] as String,
-      imageUrl: map['image_url'] as String?,
+      imageUrl: legacy,
+      imageUrls: mergedUrls,
       createdAt: DateTime.parse(map['created_at'] as String),
       updatedAt: DateTime.parse(map['updated_at'] as String),
     );

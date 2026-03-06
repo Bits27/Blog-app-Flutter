@@ -25,14 +25,14 @@ abstract class BlogRepository {
     required String title,
     required String content,
     required String category,
-    String? imageUrl,
+    List<String> imageUrls,
   });
   Future<void> updateBlog({
     required String blogId,
     required String title,
     required String content,
     required String category,
-    String? imageUrl,
+    List<String> imageUrls,
   });
   Future<void> deleteBlog(String blogId);
 }

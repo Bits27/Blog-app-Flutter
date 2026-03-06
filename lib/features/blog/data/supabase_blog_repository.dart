@@ -86,12 +86,15 @@ class SupabaseBlogRepository implements BlogRepository {
     required String title,
     required String content,
     required String category,
-    String? imageUrl,
+    List<String> imageUrls = const [],
   }) async {
     final user = supabase.auth.currentUser;
     if (user == null) {
       throw Exception('You must be logged in to create a blog.');
     }
+
+    // Keep legacy cover.
+    final primaryImageUrl = imageUrls.isNotEmpty ? imageUrls.first : null;
 
     final row = await supabase
         .from(_table)
@@ -100,7 +103,8 @@ class SupabaseBlogRepository implements BlogRepository {
           'title': title,
           'content': content,
           'category': category,
-          'image_url': imageUrl,
+          'image_url': primaryImageUrl,
+          'image_urls': imageUrls,
           'created_at': DateTime.now().toIso8601String(),
           'updated_at': DateTime.now().toIso8601String(),
         })
@@ -116,15 +120,19 @@ class SupabaseBlogRepository implements BlogRepository {
     required String title,
     required String content,
     required String category,
-    String? imageUrl,
+    List<String> imageUrls = const [],
   }) async {
+    // Keep legacy cover.
+    final primaryImageUrl = imageUrls.isNotEmpty ? imageUrls.first : null;
+
     await supabase
         .from(_table)
         .update({
           'title': title,
           'content': content,
           'category': category,
-          'image_url': imageUrl,
+          'image_url': primaryImageUrl,
+          'image_urls': imageUrls,
           'updated_at': DateTime.now().toIso8601String(),
         })
         .eq('id', blogId);

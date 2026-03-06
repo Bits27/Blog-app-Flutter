@@ -14,13 +14,13 @@ abstract class CommentRepository {
   Future<void> createComment({
     required String blogId,
     required String content,
-    String? imageUrl,
+    List<String> imageUrls,
   });
 
   Future<void> updateComment({
     required String commentId,
     required String content,
-    String? imageUrl,
+    List<String> imageUrls,
   });
 
   Future<void> deleteComment(String commentId);
